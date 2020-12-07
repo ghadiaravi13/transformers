@@ -480,7 +480,7 @@ class GenerationMixin:
                 model_kwargs=model_kwargs,
             )
         else:
-            output = self._generate_no_beam_search(
+            score,output = self._generate_no_beam_search(
                 input_ids,
                 cur_len=cur_len,
                 max_length=max_length,
@@ -500,7 +500,7 @@ class GenerationMixin:
                 model_kwargs=model_kwargs,
             )
 
-        return output
+        return score,output
 
     def _generate_no_beam_search(
         self,
@@ -530,6 +530,7 @@ class GenerationMixin:
         sent_lengths = input_ids.new(batch_size).fill_(max_length)
 
         past = None
+        score=0
         while cur_len < max_length:
             model_inputs = self.prepare_inputs_for_generation(
                 input_ids, past=past, attention_mask=attention_mask, use_cache=use_cache, **model_kwargs
@@ -569,7 +570,7 @@ class GenerationMixin:
                 next_token = torch.multinomial(probs, num_samples=1).squeeze(1)
             else:
                 # Greedy decoding
-                next_token = torch.argmax(next_token_logits, dim=-1)
+                next_log_prob,next_token = torch.max(next_token_logits, dim=-1)
 
             # update generations and finished sentences
             if eos_token_id is not None:
@@ -581,6 +582,7 @@ class GenerationMixin:
             # add token and increase length by one
             input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
             cur_len = cur_len + 1
+            score-=next_log_prob
 
             if eos_token_id is not None:
                 eos_in_sents = tokens_to_add == eos_token_id
@@ -600,7 +602,7 @@ class GenerationMixin:
                     [attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1
                 )
 
-        return input_ids
+        return math.exp(score/input_ids.shape[-1]),input_ids
 
     def _generate_beam_search(
         self,
